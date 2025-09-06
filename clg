@@ -1,0 +1,425 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>College Attendance</title>
+  <style>
+    :root{
+      --bg:#f7fafc; --card:#ffffff; --muted:#6b7280; --accent:#0ea5a4;
+      --present:#def7ec; --absent:#ffe4e6; --late:#fff7e6;
+    }
+    *{box-sizing:border-box}
+    body{font-family:Inter, system-ui, -apple-system, "Segoe UI", Roboto, Arial; margin:18px; background:var(--bg); color:#0f172a;}
+    .wrapper{max-width:1100px;margin:0 auto;}
+    header{display:flex;align-items:center;gap:14px;margin-bottom:14px;}
+    h1{margin:0;font-size:1.25rem;}
+    .topbar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+    .card{background:var(--card);padding:14px;border-radius:12px;box-shadow:0 6px 18px rgba(2,6,23,0.06);}
+    .controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    input, button, select{font-size:0.95rem;padding:8px 10px;border-radius:8px;border:1px solid #e6edf0;}
+    button{cursor:pointer;background:#fff}
+    .small{font-size:0.85rem;color:var(--muted)}
+    table{width:100%;border-collapse:collapse;margin-top:12px}
+    th,td{padding:8px;border-bottom:1px solid #eef2f6;text-align:left}
+    th{background:#fbfdfe;position:sticky;top:0}
+    .status-btn{padding:6px 8px;border-radius:8px;border:1px solid transparent;cursor:pointer}
+    .present{background:var(--present)}
+    .absent{background:var(--absent)}
+    .late{background:var(--late)}
+    .muted{color:var(--muted)}
+    .actions{display:flex;gap:6px;align-items:center}
+    .flex{display:flex;gap:8px;align-items:center}
+    .right{margin-left:auto;display:flex;gap:8px}
+    .search{min-width:220px}
+    @media (max-width:720px){
+      .topbar{flex-direction:column;align-items:flex-start}
+      header{flex-direction:column;align-items:flex-start;gap:6px}
+    }
+    /* print */
+    @media print{
+      body{background:#fff}
+      .no-print{display:none}
+      .card{box-shadow:none;border-radius:0}
+    }
+  </style>
+</head>
+<body>
+  <div class="wrapper">
+    <header>
+      <h1>College Attendance</h1>
+      <div class="small muted">Simple attendance tracker — data stored locally in this browser</div>
+    </header>
+
+    <div class="card no-print">
+      <div class="topbar">
+        <div class="controls">
+          <label class="small">Date
+            <input type="date" id="att-date" />
+          </label>
+
+          <label class="small">Class / Section
+            <input id="class-name" placeholder="e.g., BSc-III A" />
+          </label>
+
+          <div class="flex">
+            <button id="mark-all-present">Mark All Present</button>
+            <button id="mark-all-absent">Mark All Absent</button>
+            <button id="mark-all-late">Mark All Late</button>
+          </div>
+
+          <div class="right">
+            <input id="search" class="search" placeholder="Search student name / roll" />
+            <button id="export-csv">Export CSV</button>
+            <button id="print-btn">Print</button>
+          </div>
+        </div>
+      </div>
+
+      <hr />
+
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:8px">
+        <div style="flex:1;min-width:260px">
+          <div style="display:flex;gap:8px;align-items:center">
+            <input id="new-name" placeholder="Student name (e.g., John Doe)" />
+            <input id="new-roll" placeholder="Roll no." style="width:110px"/>
+            <button id="add-student">Add Student</button>
+          </div>
+          <div class="small muted" style="margin-top:6px">Tip: add full roster here. You can reorder outside the app if needed.</div>
+        </div>
+
+        <div style="min-width:260px">
+          <div style="display:flex;gap:8px;align-items:center">
+            <select id="load-sample">
+              <option value="">Load sample list</option>
+              <option value="sample1">Sample - 10 students</option>
+              <option value="sample2">Sample - 5 students</option>
+            </select>
+            <button id="clear-list">Clear List</button>
+            <button id="restore-default">Restore Demo</button>
+          </div>
+          <div class="small muted" style="margin-top:6px">Student list is saved locally.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:12px">
+      <div style="display:flex;align-items:center">
+        <strong>Students</strong>
+        <div class="right no-print">
+          <button id="delete-selected" title="Delete selected students">Delete Selected</button>
+          <button id="view-report" title="View attendance report">View Report</button>
+        </div>
+      </div>
+
+      <table id="students-table" aria-label="students">
+        <thead>
+          <tr>
+            <th style="width:34px"><input type="checkbox" id="select-all" /></th>
+            <th style="width:110px">Roll</th>
+            <th>Name</th>
+            <th style="width:230px" class="no-print">Status</th>
+            <th class="no-print" style="width:110px">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="students-body"></tbody>
+      </table>
+    </div>
+
+    <div class="card" id="history-card" style="margin-top:12px;display:none">
+      <strong>Attendance History</strong>
+      <div id="history-content" style="margin-top:8px"></div>
+    </div>
+  </div>
+
+  <script>
+    // ---- Storage keys and helpers ----
+    const STORAGE = {
+      students: 'att_students_v1',
+      attendance: 'att_records_v1', // mapping date->{class-> {roll:status}}
+      className: 'att_classname_v1'
+    };
+
+    function todayISO(){ const d=new Date(); d.setMinutes(d.getTimezoneOffset()*-1); return d.toISOString().slice(0,10); }
+
+    // get / set lists
+    function loadStudents(){
+      const raw = localStorage.getItem(STORAGE.students);
+      return raw ? JSON.parse(raw) : [];
+    }
+    function saveStudents(list){ localStorage.setItem(STORAGE.students, JSON.stringify(list)); }
+
+    function loadAttendance(){
+      const raw = localStorage.getItem(STORAGE.attendance);
+      return raw ? JSON.parse(raw) : {};
+    }
+    function saveAttendance(obj){ localStorage.setItem(STORAGE.attendance, JSON.stringify(obj)); }
+
+    // ---- UI elements ----
+    const dateInput = document.getElementById('att-date');
+    const classInput = document.getElementById('class-name');
+    const studentsBody = document.getElementById('students-body');
+    const newName = document.getElementById('new-name');
+    const newRoll = document.getElementById('new-roll');
+    const addBtn = document.getElementById('add-student');
+    const searchInput = document.getElementById('search');
+    const selectAllChk = document.getElementById('select-all');
+    const deleteSelectedBtn = document.getElementById('delete-selected');
+    const markAllPresentBtn = document.getElementById('mark-all-present');
+    const markAllAbsentBtn = document.getElementById('mark-all-absent');
+    const markAllLateBtn = document.getElementById('mark-all-late');
+    const exportCsvBtn = document.getElementById('export-csv');
+    const printBtn = document.getElementById('print-btn');
+    const viewReportBtn = document.getElementById('view-report');
+    const historyCard = document.getElementById('history-card');
+    const historyContent = document.getElementById('history-content');
+    const loadSample = document.getElementById('load-sample');
+    const clearListBtn = document.getElementById('clear-list');
+    const restoreDemoBtn = document.getElementById('restore-default');
+
+    // Defaults
+    dateInput.value = todayISO();
+    classInput.value = localStorage.getItem(STORAGE.className) || '';
+
+    // helper to ensure consistent student object
+    // student: {roll: string, name: string, id: uuid}
+    function makeStudent(name, roll){
+      return { id: cryptoRandomId(), name: (name||'').trim(), roll: (roll||'').trim() };
+    }
+    function cryptoRandomId(){ // small unique id
+      return 'id_' + Math.random().toString(36).slice(2,9);
+    }
+
+    // ---- Rendering ----
+    function renderStudents(filter=''){
+      const students = loadStudents();
+      const attendance = loadAttendance();
+      const date = dateInput.value;
+      const className = classInput.value || 'default';
+
+      studentsBody.innerHTML = '';
+      const term = filter.trim().toLowerCase();
+
+      students.forEach(s => {
+        if (term){
+          const hay = (s.name + ' ' + s.roll).toLowerCase();
+          if (!hay.includes(term)) return;
+        }
+        const tr = document.createElement('tr');
+        tr.dataset.id = s.id;
+
+        // checkbox
+        const tdChk = document.createElement('td');
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 'row-check';
+        tdChk.appendChild(cb);
+        tr.appendChild(tdChk);
+
+        const tdRoll = document.createElement('td'); tdRoll.textContent = s.roll; tr.appendChild(tdRoll);
+        const tdName = document.createElement('td'); tdName.textContent = s.name; tr.appendChild(tdName);
+
+        const tdStatus = document.createElement('td');
+        tdStatus.className = 'no-print';
+        const status = (attendance[date] && attendance[date][className] && attendance[date][className][s.roll]) || 'absent';
+        // show buttons for statuses
+        const btnPresent = document.createElement('button');
+        btnPresent.textContent = 'Present'; btnPresent.className = 'status-btn present';
+        btnPresent.addEventListener('click', ()=> setStatusFor(s.roll, 'present'));
+
+        const btnAbsent = document.createElement('button');
+        btnAbsent.textContent = 'Absent'; btnAbsent.className = 'status-btn absent';
+        btnAbsent.addEventListener('click', ()=> setStatusFor(s.roll, 'absent'));
+
+        const btnLate = document.createElement('button');
+        btnLate.textContent = 'Late'; btnLate.className = 'status-btn late';
+        btnLate.addEventListener('click', ()=> setStatusFor(s.roll, 'late'));
+
+        // highlight current
+        [btnPresent, btnAbsent, btnLate].forEach(b=> b.style.opacity = '0.6');
+        if (status === 'present') btnPresent.style.opacity = '1';
+        if (status === 'absent') btnAbsent.style.opacity = '1';
+        if (status === 'late') btnLate.style.opacity = '1';
+
+        tdStatus.appendChild(btnPresent);
+        tdStatus.appendChild(btnAbsent);
+        tdStatus.appendChild(btnLate);
+        tr.appendChild(tdStatus);
+
+        // actions
+        const tdActions = document.createElement('td');
+        tdActions.className = 'no-print';
+        const histBtn = document.createElement('button'); histBtn.textContent = 'History';
+        histBtn.addEventListener('click', ()=> showHistoryFor(s.roll));
+        const rmBtn = document.createElement('button'); rmBtn.textContent = 'Remove';
+        rmBtn.addEventListener('click', ()=> { removeStudent(s.id); });
+
+        tdActions.appendChild(histBtn);
+        tdActions.appendChild(rmBtn);
+        tr.appendChild(tdActions);
+
+        studentsBody.appendChild(tr);
+      });
+    }
+
+    // ---- Attendance operations ----
+    function setStatusFor(roll, status){
+      const date = dateInput.value;
+      if (!date) { alert('Select a date'); return; }
+      const className = classInput.value || 'default';
+      const records = loadAttendance();
+      if (!records[date]) records[date] = {};
+      if (!records[date][className]) records[date][className] = {};
+      records[date][className][roll] = status;
+      saveAttendance(records);
+      renderStudents(searchInput.value);
+    }
+
+    function bulkMarkAll(status){
+      const students = loadStudents();
+      const date = dateInput.value;
+      if (!date) { alert('Select a date'); return; }
+      const className = classInput.value || 'default';
+      const records = loadAttendance();
+      if (!records[date]) records[date] = {};
+      if (!records[date][className]) records[date][className] = {};
+      students.forEach(s => records[date][className][s.roll] = status);
+      saveAttendance(records);
+      renderStudents(searchInput.value);
+    }
+
+    // ---- Students CRUD ----
+    function addStudentFromInputs(){
+      const name = newName.value.trim();
+      const roll = newRoll.value.trim();
+      if (!name || !roll) { alert('Please enter both name and roll.'); return; }
+      const students = loadStudents();
+      // prevent duplicate roll
+      if (students.some(s=> s.roll === roll)){
+        if (!confirm('Roll already exists. Add another with same roll?')) return;
+      }
+      students.push(makeStudent(name, roll));
+      saveStudents(students);
+      newName.value = ''; newRoll.value = '';
+      renderStudents(searchInput.value);
+    }
+
+    function removeStudent(id){
+      if (!confirm('Remove this student?')) return;
+      const students = loadStudents().filter(s=> s.id !== id);
+      saveStudents(students);
+      renderStudents(searchInput.value);
+    }
+
+    function deleteSelected(){
+      const checks = Array.from(document.querySelectorAll('.row-check'));
+      if (!checks.some(cb => cb.checked)) { alert('No students selected'); return; }
+      if (!confirm('Delete selected students?')) return;
+      const rows = Array.from(document.querySelectorAll('#students-body tr'));
+      let students = loadStudents();
+      rows.forEach((r, i) => {
+        const cb = r.querySelector('.row-check');
+        if (cb && cb.checked){
+          const id = r.dataset.id;
+          students = students.filter(s => s.id !== id);
+        }
+      });
+      saveStudents(students);
+      renderStudents(searchInput.value);
+    }
+
+    // ---- Reports / History ----
+    function showHistoryFor(roll){
+      historyCard.style.display = 'block';
+      const records = loadAttendance();
+      const rows = [];
+      for (const date in records){
+        for (const cls in records[date]){
+          const status = records[date][cls][roll];
+          if (status) rows.push({date, cls, status});
+        }
+      }
+      if (rows.length === 0){
+        historyContent.innerHTML = '<div class="small muted">No history found for this roll.</div>';
+        return;
+      }
+      rows.sort((a,b)=> a.date.localeCompare(b.date));
+      const html = ['<table style="width:100%;border-collapse:collapse"><thead><tr><th>Date</th><th>Class</th><th>Status</th></tr></thead><tbody>'];
+      rows.forEach(r => html.push(`<tr><td>${r.date}</td><td>${r.cls}</td><td>${r.status}</td></tr>`));
+      html.push('</tbody></table>');
+      historyContent.innerHTML = html.join('');
+      historyCard.scrollIntoView({behavior:'smooth'});
+    }
+
+    function viewReport(){
+      const date = dateInput.value;
+      if (!date) { alert('Choose date'); return; }
+      const className = classInput.value || 'default';
+      const students = loadStudents();
+      const records = loadAttendance();
+      const dayRec = (records[date] && records[date][className]) || {};
+      let present=0, absent=0, late=0;
+      const lines = ['<table style="width:100%;border-collapse:collapse"><thead><tr><th>Roll</th><th>Name</th><th>Status</th></tr></thead><tbody>'];
+      students.forEach(s=>{
+        const st = dayRec[s.roll] || 'absent';
+        if (st==='present') present++;
+        if (st==='absent') absent++;
+        if (st==='late') late++;
+        lines.push(`<tr><td>${s.roll}</td><td>${s.name}</td><td>${st}</td></tr>`);
+      });
+      lines.push('</tbody></table>');
+      lines.push(`<div style="margin-top:8px" class="small muted">Present: ${present} | Absent: ${absent} | Late: ${late}</div>`);
+      historyCard.style.display = 'block';
+      historyContent.innerHTML = lines.join('');
+      historyCard.scrollIntoView({behavior:'smooth'});
+    }
+
+    // ---- Export CSV ----
+    function exportCSV(){
+      const date = dateInput.value;
+      if (!date) { alert('Choose date'); return; }
+      const className = classInput.value || 'default';
+      const students = loadStudents();
+      const records = loadAttendance();
+      const dayRec = (records[date] && records[date][className]) || {};
+      const rows = [['Roll','Name','Date','Class','Status']];
+      students.forEach(s => rows.push([s.roll, s.name, date, className, dayRec[s.roll] || 'absent']));
+      const csv = rows.map(r => r.map(cell => `"${String(cell).replace(/"/g,'""')}"`).join(',')).join('\n');
+      const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `attendance_${className}_${date}.csv`;
+      document.body.appendChild(a); a.click(); a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    // ---- Sample lists / utils ----
+    function loadSampleList(key){
+      const s1 = [
+        {name:'Aarav Sharma', roll:'BSC101'}, {name:'Maya Singh', roll:'BSC102'}, {name:'Rohan Verma', roll:'BSC103'},
+        {name:'Sana Patel', roll:'BSC104'}, {name:'Karan Mehta', roll:'BSC105'}, {name:'Neha Gupta', roll:'BSC106'},
+        {name:'Vikram Rao', roll:'BSC107'}, {name:'Isha Nair', roll:'BSC108'}, {name:'Rahul Jain', roll:'BSC109'},
+        {name:'Priya Menon', roll:'BSC110'}
+      ];
+      const s2 = [
+        {name:'Student One', roll:'C101'}, {name:'Student Two', roll:'C102'}, {name:'Student Three', roll:'C103'},
+        {name:'Student Four', roll:'C104'}, {name:'Student Five', roll:'C105'}
+      ];
+      const pick = key === 'sample1' ? s1 : s2;
+      const arr = pick.map(x => makeStudent(x.name, x.roll));
+      saveStudents(arr);
+      renderStudents(searchInput.value);
+    }
+
+    // ---- Events ----
+    addBtn.addEventListener('click', addStudentFromInputs);
+    newName.addEventListener('keydown', (e)=> { if (e.key === 'Enter') addStudentFromInputs(); });
+    newRoll.addEventListener('keydown', (e)=> { if (e.key === 'Enter') addStudentFromInputs(); });
+
+    dateInput.addEventListener('change', ()=> renderStudents(searchInput.value));
+    classInput.addEventListener('change', ()=> { localStorage.setItem(STORAGE.className, classInput.value || ''); renderStudents(searchInput.value); });
+
+    searchInput.addEventListener('input', ()=> renderStudents(searchInput.value));
+
+    selectAllChk.addEventListener('change', (e)=>{
+      document.querySelectorAll('.row-check').forEach(cb => cb.checked = e.target.checked)
